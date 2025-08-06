@@ -8,7 +8,7 @@
     </div>
 
     <div class="event-filters">
-      <select v-model="filter" @change="loadEvents" class="filter-select">
+      <select v-model="filter" class="filter-select">
         <option value="upcoming">Upcoming Events</option>
         <option value="past">Past Events</option>
         <option value="my-events">My Events</option>
@@ -21,11 +21,11 @@
     </div>
 
     <div v-else-if="events.length === 0" class="no-events">
-      <i class="fas fa-calendar-xmark fa-3x"></i>
-      <p>No events found</p>
-      <button @click="showCreateModal = true" class="btn-secondary">
-        Create the first event
-      </button>
+      <EventCreateInline 
+        :currentUser="currentUser"
+        @created="onEventCreated"
+        @cancelled="onEventCancelled"
+      />
     </div>
 
     <div v-else class="event-list">
@@ -46,8 +46,8 @@
       :event="selectedEvent"
       :currentUser="currentUser"
       @close="selectedEvent = null"
-      @update="updateEvent"
-      @delete="deleteEvent"
+      @update="handleUpdateEvent"
+      @delete="handleDeleteEvent"
       @join="joinEvent"
       @leave="leaveEvent"
     />
@@ -55,8 +55,6 @@
     <!-- Create Event Modal -->
     <EventCreateModal
       v-if="showCreateModal"
-      :gun="gun"
-      :space="space"
       :currentUser="currentUser"
       @close="showCreateModal = false"
       @created="onEventCreated"
@@ -65,31 +63,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useEventProvider } from '../composables/eventProvider'
+import { ref, computed } from 'vue'
+import { useEvent } from '../composables/eventProvider'
 import EventListItem from './EventListItem.vue'
 import EventDetailModal from './EventDetailModal.vue'
 import EventCreateModal from './EventCreateModal.vue'
+import EventCreateInline from './EventCreateInline.vue'
 import type { Event, User } from '../types/event'
 
 const props = defineProps<{
-  gun: any
-  user: any
-  space: string
+  user?: any
   sphere?: any
 }>()
 
 const {
   events,
   loading,
-  loadEvents,
   createEvent,
   updateEvent,
   deleteEvent,
   joinEvent: joinEventFn,
-  leaveEvent: leaveEventFn,
-  cleanup
-} = useEventProvider(props.gun, props.space)
+  leaveEvent: leaveEventFn
+} = useEvent()
 
 const showCreateModal = ref(false)
 const selectedEvent = ref<Event | null>(null)
@@ -102,12 +97,25 @@ const currentUser = computed<User>(() => ({
 }))
 
 const sortedEvents = computed(() => {
+  console.log('🔍 Main.vue sortedEvents computed:', {
+    totalEvents: events.value.length,
+    events: events.value.map(e => ({ id: e.id, title: e.title, date: e.date, dateObj: new Date(e.date) })),
+    filter: filter.value
+  })
+
   const now = Date.now()
   let filtered = events.value
+  
+  console.log('🔍 Current time:', new Date(now).toISOString());
 
   switch (filter.value) {
     case 'upcoming':
-      filtered = events.value.filter(e => new Date(e.date).getTime() > now)
+      filtered = events.value.filter(e => {
+        const eventTime = new Date(e.date).getTime()
+        const isUpcoming = eventTime > now
+        console.log(`🔍 Event "${e.title}" (${e.date}) is upcoming:`, isUpcoming, 'Event time:', eventTime, 'Now:', now)
+        return isUpcoming
+      })
       break
     case 'past':
       filtered = events.value.filter(e => new Date(e.date).getTime() <= now)
@@ -121,6 +129,8 @@ const sortedEvents = computed(() => {
       )
       break
   }
+  
+  console.log('🔍 After filtering:', filtered.length, 'events remain')
 
   return filtered.sort((a, b) => {
     const dateA = new Date(a.date).getTime()
@@ -141,18 +151,24 @@ const leaveEvent = async (event: Event) => {
   await leaveEventFn(event.id, currentUser.value.pub)
 }
 
+const handleUpdateEvent = (event: Event) => {
+  // For now, just close the modal since we don't have an update implementation
+  selectedEvent.value = null
+}
+
+const handleDeleteEvent = async (event: Event) => {
+  await deleteEvent(event.id)
+  selectedEvent.value = null
+}
+
 const onEventCreated = (eventId: string) => {
   showCreateModal.value = false
   // Event will appear automatically via Gun subscription
 }
 
-onMounted(() => {
-  loadEvents()
-})
-
-onUnmounted(() => {
-  cleanup()
-})
+const onEventCancelled = () => {
+  console.log('Event creation cancelled')
+}
 </script>
 
 <style scoped>
@@ -216,18 +232,7 @@ onUnmounted(() => {
 }
 
 .no-events {
-  text-align: center;
-  padding: 3rem;
-  color: var(--color-text-secondary);
-}
-
-.no-events i {
-  margin-bottom: 1rem;
-  opacity: 0.5;
-}
-
-.no-events p {
-  margin: 1rem 0;
+  padding: 2rem;
 }
 
 .event-list {
